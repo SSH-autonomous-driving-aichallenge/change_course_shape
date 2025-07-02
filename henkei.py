@@ -48,7 +48,7 @@ class WaypointEditor:
         self.save_button.pack(side=tk.LEFT, padx=5)
 
         tk.Label(top_frame, text="移動率:").pack(side=tk.LEFT, padx=(10, 0))
-        self.move_factor = tk.DoubleVar(value=0.3)
+        self.move_factor = tk.DoubleVar(value=0.1)
         self.slider = tk.Scale(top_frame, from_=0.0, to=1.0, resolution=0.05,
                                orient=tk.HORIZONTAL, variable=self.move_factor)
         self.slider.pack(side=tk.LEFT, padx=5)

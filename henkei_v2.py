@@ -31,10 +31,29 @@ class WaypointEditor:
             messagebox.showerror("エラー", f"ファイルが見つかりません: {self.filepath}")
             self.master.quit()
             return
-        except Exception as e:
-            messagebox.showerror("エラー", f"ファイルの読み込みに失敗しました: {e}")
-            self.master.quit()
-            return
+        except Exception:
+            # 【2】traj_race_cl.csv 形式対応: セミコロン区切り＋コメント行スキップ
+            try:
+                cols = ['s_m','x_m','y_m','psi_rad','kappa_radpm','vx_mps','ax_mps2']
+                alt = pd.read_csv(
+                    self.filepath,
+                    sep=';',
+                    header=None,
+                    names=cols,
+                    skiprows=3,        # 先頭の2行UUID＋ヘッダコメントをスキップ
+                    engine='python'
+                )
+                # x_m,y_m を x,y にリネームして DataFrame 化
+                self.df = (
+                        alt.rename(columns={'x_m':'x','y_m':'y', 'kappa_radpm':'kappa'})
+                       [['x','y', 'kappa']]
+                       .astype(float)
+                       .reset_index(drop=True)
+                )
+            except Exception as e:
+                messagebox.showerror("エラー", f"ファイルの読み込みに失敗しました: {e}")
+                self.master.quit()
+                return
 
         # --- コースデータ読み込み ---
         try:
@@ -267,6 +286,17 @@ class WaypointEditor:
         # DataFrameを書き換え
         self.df.loc[idx, 'x'] = new_x
         self.df.loc[idx, 'y'] = new_y
+
+        # 曲率の更新
+        n = len(new_x)
+        dx = np.diff(new_x, append=new_x[0])
+        dy = np.diff(new_y, append=new_y[0])
+        ds = np.hypot(dx, dy)
+        psi = np.arctan2(dy, dx)
+        dpsi = (np.diff(psi, append=psi[0]) + np.pi) % (2 * np.pi) - np.pi
+        new_kappa = dpsi / ds
+
+        self.df.loc[idx, 'kappa'] = new_kappa
  
         # プロットを更新
         self.update_plot()
@@ -283,7 +313,7 @@ class WaypointEditor:
 def main():
     # ここでCSVファイルのパスを直接指定します
     # スクリプトと同じディレクトリに 'waypoints.csv' があることを想定
-    csv_path = "raceline_awsim_15km.csv"
+    csv_path = "traj.csv"
 
     root = tk.Tk()
     app = WaypointEditor(root, csv_path)

@@ -36,6 +36,15 @@ class WaypointEditor:
             self.master.quit()
             return
 
+        # --- コースデータ読み込み ---
+        try:
+            self.course_df = pd.read_csv("aic_2024.csv")  # update path if needed
+            if not {'x_m', 'y_m', 'w_tr_right_m', 'w_tr_left_m'}.issubset(self.course_df.columns):
+                raise ValueError("Edge CSV must contain 'x_m', 'y_m', 'w_tr_right_m' and 'w_tr_left_m' columns.")
+        except Exception as e:
+            messagebox.showerror("エラー", f"エッジファイルの読み込みに失敗しました: {e}")
+            self.course_df = None
+
         # --- GUIのセットアップ ---
         self.master.title("ウェイポイントエディタ")
         self.master.geometry("1000x800")
@@ -68,9 +77,10 @@ class WaypointEditor:
         self.smooth_button = tk.Button(smoothing_frame, text="平滑化を適用", command=self.smooth_selection)
         self.smooth_button.pack(side=tk.LEFT, padx=5, pady=5)
 
-        instructions = "点2つを左クリックで区間選択。右クリックで選択点をカーソル方向へ移動。"
-        self.label = tk.Label(top_frame, text=instructions, fg="blue")
-        self.label.pack(side=tk.LEFT, padx=10)
+
+        # --- 直線化 ---
+        self.straighten_button = tk.Button(top_frame, text="直線化", command=self.straighten_segment)
+        self.straighten_button.pack(side=tk.LEFT, padx=5)
 
         # --- Matplotlibのセットアップ ---
         self.fig, self.ax = plt.subplots(figsize=(10, 8))
@@ -90,6 +100,46 @@ class WaypointEditor:
         self.ax.set_ylabel("Y座標")
         self.ax.grid(True)
         self.ax.set_aspect('equal', adjustable='box')
+
+        # --- コースの縁を追加 ---
+        if self.course_df is not None:
+            x = self.course_df['x_m'].values
+            y = self.course_df['y_m'].values
+            w_left = self.course_df['w_tr_left_m'].values
+            w_right = self.course_df['w_tr_right_m'].values
+
+            dx = np.empty_like(x)
+            dy = np.empty_like(y)
+
+            dx[1:-1] = x[2:] - x[:-2]
+            dy[1:-1] = y[2:] - y[:-2]
+
+            dx[0] = x[1] - x[0]                    
+            dy[0] = y[1] - y[0]
+            dx[-1] = x[-1] - x[-2]
+            dy[-1] = y[-1] - y[-2]
+
+            kernel = np.ones(5)/5
+            dx_s = np.convolve(dx, kernel, mode='same')
+            dy_s = np.convolve(dy, kernel, mode='same')
+            L = np.hypot(dx_s, dy_s)
+            dx_u = dx_s / L
+            dy_u = dy_s / L
+
+            nx, ny = -dy_u, dx_u
+            left_x = x + nx * w_left
+            left_y = y + ny * w_left
+            right_x = x - nx * w_right
+            right_y = y - ny * w_right
+
+            left_x = np.append(left_x, left_x[0])
+            left_y = np.append(left_y, left_y[0])
+            right_x = np.append(right_x, right_x[0])
+            right_y = np.append(right_y, right_y[0])
+
+  
+            self.ax.plot(left_x,  left_y,  'r-', label='Left Edge')
+            self.ax.plot(right_x, right_y, 'r-', label='Right Edge')
 
         # --- イベント接続 ---
         self.fig.canvas.mpl_connect('pick_event', self.on_pick)
@@ -196,6 +246,32 @@ class WaypointEditor:
 
         self.canvas.draw_idle()
 
+    def straighten_segment(self):
+        # 選択区間がない or 点数不足
+        if len(self.selected_indices) < 2:
+            messagebox.showwarning("警告", "まず２点を選択してください。")
+            return
+ 
+        idx = self.selected_indices
+        start_idx, end_idx = idx[0], idx[-1]
+ 
+        # 始点・終点の座標
+        x1, y1 = self.df.loc[start_idx, ['x','y']]
+        x2, y2 = self.df.loc[end_idx,   ['x','y']]
+ 
+        n = len(idx)
+        # 等間隔な補間
+        new_x = np.linspace(x1, x2, n)
+        new_y = np.linspace(y1, y2, n)
+ 
+        # DataFrameを書き換え
+        self.df.loc[idx, 'x'] = new_x
+        self.df.loc[idx, 'y'] = new_y
+ 
+        # プロットを更新
+        self.update_plot()
+
+
     def save_csv(self):
         """変更をCSVファイルに保存する。"""
         try:
@@ -207,7 +283,7 @@ class WaypointEditor:
 def main():
     # ここでCSVファイルのパスを直接指定します
     # スクリプトと同じディレクトリに 'waypoints.csv' があることを想定
-    csv_path = "output.csv"
+    csv_path = "raceline_awsim_15km.csv"
 
     root = tk.Tk()
     app = WaypointEditor(root, csv_path)
